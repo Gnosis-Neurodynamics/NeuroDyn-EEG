@@ -1,0 +1,38 @@
+{
+  "paths": {
+    "simulation_dir": "validation_data",
+    "simulation_glob": "**/chunk_*_Param14.npz",
+    "real_dir": "RealData",
+    "manifest": "RealData/participants.csv",
+    "checkpoint": "TrainWorks/checkpoints/neurodynEEG_best.pth",
+    "prepared_dir": "validation/cache/real",
+    "results_dir": "validation/results"
+  },
+  "inference": {"device": "auto", "batch_size": 64},
+  "real": {
+    "sfreq": 256,
+    "segment_seconds": 5,
+    "channels": ["FP1", "FP2", "FZ", "F3", "F4", "F7", "F8", "CZ", "C3", "C4", "PZ", "P3", "P4", "T3", "T4", "T5", "T6", "O1", "O2"],
+    "bandpass_hz": [1, 40],
+    "notch_hz": [],
+    "qc_mean_channel_ptp_uv": [3, 100],
+    "cohort_overrides": {}
+  },
+  "simulation": {"qc": "training", "amp_lo": 3, "amp_hi": 100},
+  "noise": {
+    "seed": 2026,
+    "families": ["white", "pink", "emg", "eog"],
+    "snr_db": [30, 20, 10, 5, 0, -5],
+    "emg_envelope_rate_hz": 2,
+    "emg_envelope_width_seconds": 0.25,
+    "eog_blink_rate_hz": 0.2
+  },
+  "closed_loop": {"seed": 2026, "burn_in_seconds": 1},
+  "downstream": {
+    "seeds": [42, 2026], "folds": 5, "epochs": 50,
+    "batch_size": 128, "lr": 0.001, "weight_decay": 0.0001,
+    "hidden": 50, "dropout": 0.1, "device": "auto",
+    "save_checkpoints": true
+  },
+  "group_analysis": {"fdr_q": 0.001}
+}

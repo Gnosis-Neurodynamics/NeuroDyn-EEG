@@ -1,0 +1,670 @@
+%% Supplementary Materials for NeuroDyn-EEG (standalone document).
+%% Compile with LaTeX and BibTeX; use the verified references.bib in the same Overleaf project.
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext, newtxmath}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{amsmath}
+% \usepackage{amssymb}
+\usepackage{microtype}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{longtable}
+
+\usepackage{graphicx}
+\usepackage{natbib}
+\usepackage{doi}
+
+\newcounter{suppsec}
+\renewcommand{\thesuppsec}{S\arabic{suppsec}}
+\newcommand{\suppsubsection}[1]{%
+  \refstepcounter{suppsec}%
+  \subsection*{\thesuppsec.\ #1}%
+}
+
+\title{\textbf{Supplementary Materials}\\\large NeuroDyn-EEG: An Interpretable Pre-trained Model for EEG Based on Neural Dynamics}
+\date{}
+
+\begin{document}
+
+\renewcommand{\thefigure}{S\arabic{figure}}
+\renewcommand{\thetable}{S\arabic{table}}
+\renewcommand{\thealgorithm}{S\arabic{algorithm}}
+\renewcommand{\tablename}{Supplementary Table}
+\floatname{algorithm}{Supplementary Algorithm}
+
+\maketitle
+
+\paragraph{Overview}
+
+This document compiles extended tables, the hierarchical, physiology-informed parameter sampler used to generate the training corpus (Section~S1), training implementation details (Section~S2), baseline-specific preprocessing specifications and NeuroDyn-EEG clinical cohort harmonization rules (Section~S3), downstream evaluation setups (Section~S4), simulation experiment metrics (Section~S5), surrogate noise synthesis for robustness experiments (Section~S6), clinical cohort JR parameter statistical tables and AAL naming mapping notes (Section~S7), as well as the training algorithm referenced in the main text. In the main text, a framework schematic summarizes the three-stage modeling and validation pipeline of NeuroDyn-EEG, while simulation validation and downstream/parameter-level analyses are reported in dedicated result figures and tables. Tables are numbered S1--S7; extended subsections are numbered S1--S7; the algorithm is designated as Supplementary Algorithm~S1.
+
+% ---------------------------------------------------------------------------
+
+\begin{table}[t]
+\centering
+\caption{Sampled dynamical parameters for forward simulation. Bounds specify the simulation prior.}
+\label{tab:supp_sampling}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{0.10\linewidth}p{0.385\linewidth}p{0.18\linewidth}p{0.09\linewidth}p{0.175\linewidth}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Description} & \textbf{Range} & \textbf{Unit} & \textbf{Distribution} \\
+\midrule
+$\tau_{e1}$ & Excitatory time constant, slow branch & $[10,35]$ & $\mathrm{ms}$ & HTN \\
+$\tau_{i1}$ & Inhibitory time constant, slow branch & $[10,35]$ & $\mathrm{ms}$ & Conditional uniform \\
+$\tau_{e2}$ & Excitatory time constant, fast branch & $[3.9,8.4]$ & $\mathrm{ms}$ & HTN \\
+$\tau_{i2}$ & Inhibitory time constant, fast branch & $[7.3,16.8]$ & $\mathrm{ms}$ & Conditional uniform \\
+$C_1$ & Local coupling factor: pyramidal to excitatory interneurons & $[0.5,1.5]$ & $1$ & HTN \\
+$C_2$ & Local coupling factor: excitatory interneurons to pyramidal cells & $[0.4,1.2]$ & $1$ & HTN \\
+$C_3$ & Local coupling factor: pyramidal to inhibitory interneurons & $[0.125,0.375]$ & $1$ & HTN \\
+$C_4$ & Local coupling factor: inhibitory interneurons to pyramidal cells & $[0.125,0.375]$ & $1$ & HTN \\
+$r_{\max}$ & Maximum firing rate & $[2.5,7.5]$ & $\mathrm{s}^{-1}$ & HTN \\
+$\theta$ & Sigmoid half-activation potential & $[5.4,6.6]$ & $\mathrm{mV}$ & HTN \\
+$\beta$ & Sigmoid slope parameter & $[0.5,0.62]$ & $\mathrm{mV}^{-1}$ & HTN \\
+$\delta_s$ & Global delay coordinate (\texttt{delay\_scale}) & $[0,1]$ & $1$ & Uniform \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{\linewidth}
+\footnotesize
+The unit $1$ denotes a dimensionless quantity. HTN denotes the hierarchical truncated normal scheme in Equations~(S1.2)--(S1.3). Inhibitory time constants follow the conditional construction in Equation~(S1.5), within the tabulated bounds. The dimensionless factors $C_1$--$C_4$ are multiplied by $C_{\mathrm{avg}}=135$ inside the simulator. The physical global delay is $d=(10~\mathrm{ms})\delta_s$, with nominal range $[0,10]$~ms. All parameters except $\delta_s$ vary across the 90 regions; $\delta_s$ is shared across the whole brain within each sample.
+\end{minipage}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Fixed simulator constants, gain constraints, and structural settings.}
+\label{tab:supp_fixed}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{0.16\linewidth}p{0.48\linewidth}p{0.17\linewidth}p{0.12\linewidth}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Description} & \textbf{Value or rule} & \textbf{Unit} \\
+\midrule
+$H_{e1}/H_{i1}$ & Excitatory/inhibitory synaptic gains, slow branch & $3.25/22$ & $\mathrm{mV}$ \\
+$H_{e2}$ & Excitatory synaptic gain, fast branch & $32.5/1000\tau_{e2}$ & $\mathrm{mV}$ \\
+$H_{i2}$ & Inhibitory synaptic gain, fast branch & $440/1000\tau_{i2}$ & $\mathrm{mV}$ \\
+$C_{\mathrm{avg}}$ & Reference local connectivity scale & 135 & $1$ \\
+$\mu/\sigma_p$ & Mean/standard deviation of the Gaussian background input & $220/22$ & $\mathrm{s}^{-1}$ \\
+$\sigma_{\mathrm{ref}}$ & Reference amplitude for interregional coupling normalization & $22$ & $\mathrm{s}^{-1}$ \\
+$\omega$ & Slow-branch mixing weight (\texttt{band\_w}) & 0.5 & $1$ \\
+$\mathbf{K}$ & Structural coupling matrix, fixed across samples & DTI-derived & $1$ \\
+$\tau_{\mathrm{delay,base}}$ & Conversion scale for the global delay coordinate & 10 & $\mathrm{ms}$ \\
+\bottomrule
+\end{tabular}
+\par\smallskip
+\begin{minipage}{\linewidth}
+\footnotesize
+The unit $1$ denotes a dimensionless quantity. For paired entries, the listed unit applies to both quantities.Fast-branch gains are determined by the sampled time constants through
+$H_{e2}\tau_{e2}=0.0325~\mathrm{mV\,s}$ and
+$H_{i2}\tau_{i2}=0.44~\mathrm{mV\,s}$, following the gain rule in
+Table~2 of \citet{coroneloliveros2026multifrequency}.
+Thus, the products are fixed, whereas the gains vary with the time
+constants and are not independently sampled or estimated.
+\end{minipage}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Loss weights $w_k$ for multi-task MAE training ($k$ indexes physical targets).}
+\label{tab:supp_weights}
+\begin{tabular}{l*{11}{c}}
+\toprule
+Target & $\tau_{e1}$ & $\tau_{i1}$ & $\tau_{e2}$ & $\tau_{i2}$ & $\theta$ & $\beta$ & $r_{\max}$ & $C_1$ & $C_2$ & $C_3$ & $C_4$ \\
+\midrule
+$w_k$ & 1.2 & 1.0 & 1.5 & 1.5 & 1.0 & 1.5 & 1.0 & 5.0 & 5.0 & 20.0 & 20.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Hierarchical sampling hyperparameters entering Equations~(S1.2)--(S1.3). For a bound width $\Delta_k=h_k-\ell_k$, the parent-Gaussian standard deviations are $\sigma_{\mathrm{subj}}^{(k)}=\alpha^{\mathrm{subj}}\Delta_k$ and $\sigma_{\mathrm{node}}^{(k)}=\alpha^{\mathrm{node}}\Delta_k$. The choice $\alpha^{\mathrm{subj}}=1/4$ makes the width of the parent Gaussian's $\pm2\sigma$ interval equal to $\Delta_k$. Truncation determines the resulting distribution moments.}
+\label{tab:supp_sampler_hp}
+\small
+\begin{tabular}{@{}p{0.31\linewidth}p{0.10\linewidth}p{0.10\linewidth}p{0.41\linewidth}@{}}
+\toprule
+\textbf{Parameter family} & $\alpha^{\mathrm{subj}}$ & $\alpha^{\mathrm{node}}$ & \textbf{Notes} \\
+\midrule
+$\tau_{e1},\;\tau_{e2}$ & $1/4$ & $1/12$ & Smaller within-sample dispersion \\
+$\theta,\;\beta,\;r_{\max}$ & $1/4$ & $1/8$ & Intermediate within-sample dispersion \\
+$C_1,\;C_2,\;C_3,\;C_4$ & $1/4$ & $1/6$ & Larger within-sample dispersion \\
+$\tau_{i1},\;\tau_{i2}$ & --- & --- & Conditional on the matching excitatory time constant; Equation~(S1.4) \\
+$\delta_s$ (\texttt{delay\_scale}) & --- & --- & One uniform draw per sample \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\section*{Extended Methods}
+
+\suppsubsection{Training Data Synthesis: Hierarchical, Physiologically Aware Parameter Sampling}
+\label{sec:supp_sampling}
+
+\paragraph{Correspondence with the main-text model}
+The state equations and the definitions of the local feedback potential $Z_i(t)$, regional source activity $y_i(t)$, and total afferent input $I_i(t)$ are given in Section~2.2 of the main text. The present section specifies the parameter conventions and sampling procedure used with that model. Local excitatory and inhibitory feedback both depend on $Z_i(t)=\omega v_1^i(t)+(1-\omega)v_4^i(t)$; the inhibitory postsynaptic components $v_3^i$ and $v_6^i$ enter the net source activity through $y_i(t)=\omega[v_2^i(t)-v_3^i(t)]+(1-\omega)[v_5^i(t)-v_6^i(t)]$. The slow and fast branches share the local connectivity factors, sigmoid parameters, and afferent input. The inversion targets comprise 11 region-wise parameter families and one sample-level delay coordinate.
+
+The tabulated $C_1$--$C_4$ are dimensionless factors. The effective local coefficients are $\Gamma_{m,i}=C_{\mathrm{avg}}C_{m,i}$, with $C_{\mathrm{avg}}=135$ and $m=1,\ldots,4$. With $\Phi_i(u)=r_{\max,i}/\{1+\exp[\beta_i(\theta_i-u)]\}$, the main-text feedback functions correspond to
+\[
+\begin{aligned}
+S_{1,i}(u)=S_{4,i}(u)&=\Phi_i(u),\\
+S_{2,i}(u)=S_{5,i}(u)&=\Gamma_{2,i}\Phi_i(\Gamma_{1,i}u),\\
+S_{3,i}(u)=S_{6,i}(u)&=\Gamma_{4,i}\Phi_i(\Gamma_{3,i}u).
+\end{aligned}
+\]
+The region index on these functions is implicit in the main-text equations. This convention incorporates local connection coefficients in the sigmoid input and output scaling. Membrane potentials and synaptic gains are expressed in mV, firing rates in $\mathrm{s}^{-1}$, and time constants in seconds when evaluating the dynamical equations. Supplementary Table~\ref{tab:supp_sampling} reports time constants in ms.
+
+\paragraph{Fast-branch synaptic gain parameterization}
+Following the formulation in \citet{coroneloliveros2026multifrequency}, synaptic gains for the fast branch are parameterized inversely with their corresponding time constants to preserve the area of postsynaptic potentials.
+% \[
+% H_{e2}=\frac{0.0325~\mathrm{mV\,s}}{\tau_{e2}},\qquad
+% H_{i2}=\frac{0.44~\mathrm{mV\,s}}{\tau_{i2}}.
+% \]
+
+
+\paragraph{Background input and interregional coupling}
+The background term in $I_i(t)$ was generated by independent Gaussian sampling at successive simulation time steps. At $t_n=n\Delta t$, the input was defined as
+\[
+p_n=\mu+\varepsilon_n,\qquad
+\varepsilon_n\overset{\mathrm{i.i.d.}}{\sim}\mathcal{N}(0,\sigma_p^2).
+\]
+The sampled values were supplied directly to the neural-mass model. Within each simulated sample, a single background sequence was shared across all regions, such that $p_i(t_n)=p_n$. This gives the main-text decomposition $p_i(t_n)=\mu+\widetilde p_i(t_n)$, with $\widetilde p_i(t_n)=\varepsilon_n$. Both local dynamical branches received this background drive through their common afferent input $I_i(t_n)$.
+
+For interregional coupling, $K_{ij}$ denotes the fixed weight from source region $j$ to target region $i$. The effective coefficient $K_{ij}^{*}(t)$ defined in the main text additionally depends on the cumulative history of the source firing rate. Its reference amplitude is fixed at $\sigma_{\mathrm{ref}}=22~\mathrm{s}^{-1}$. The parameter $\sigma_p$ specifies the standard deviation of the Gaussian background input, and $\sigma_{\mathrm{ref}}$ sets the scale of the normalized interregional input. The total input variance depends on the background drive, source fluctuations, and their covariances.
+
+
+\paragraph{Motivation}
+The sampler assigns a dynamical parameter configuration to each synthetic whole-brain sample. The bounds in Supplementary Table~\ref{tab:supp_sampling} define the simulation prior for the reported experiments. The dual-timescale architecture builds on the neural-mass modeling framework described in the main text \citep{david2003modeling}. The fixed gains, sampling intervals, and hierarchy specify the configuration explored in this study. Holding the gains and structural connectivity fixed focuses inversion on local response times, local coupling, sigmoid response properties, and the global transmission timescale. The slow and fast labels refer to the relative synaptic timescales of the two branches; their observable spectra emerge from the coupled nonlinear dynamics.
+
+The dimensionless delay coordinate $\delta_s=\mathrm{delay\_scale}$ is drawn once per sample and shared by all interregional connections:
+
+
+\begin{equation}
+\delta_s \sim \mathrm{Uniform}(0, 1), \quad d_s = \tau_{\mathrm{delay,base}}\delta_s = (10\mathrm{~ms})\delta_s. \tag{S1.1}
+\label{eq:supp_delay}
+\end{equation}
+
+
+
+The nominal physical-delay prior therefore spans $0$--$10$~ms. This scalar is excluded from region-wise FDR analyses. For the regional parameters, a shared sample-level latent location and smaller conditional dispersions induce interregional dependence. Excitatory and inhibitory time constants are additionally coupled through the study-specific constraint in Equation~(S1.4). These choices define a structured prior for synthetic data generation.
+
+\paragraph{Two-Level Truncated Normal Scheme}
+Let $s$ index simulated samples, $i$ index brain regions, and $k$ index a directly sampled parameter family. For bounds $[\ell_k,h_k]$ and width $\Delta_k=h_k-\ell_k$, the sampler first draws a sample-level latent location $m_s^{(k)}$ and then draws regional values conditionally independently given that location:
+
+\begin{align}
+m_s^{(k)} & \sim \mathcal{TN}\!\left(\frac{\ell_k+h_k}{2}, \, \sigma_{\mathrm{subj}}^{(k)}; \, \ell_k,h_k\right), \tag{S1.2}\label{eq:supp_sample_location}\\
+\vartheta_{s,i}^{(k)} \mid m_s^{(k)} &\sim \mathcal{TN}\!\left(m_s^{(k)}, \, \sigma_{\mathrm{node}}^{(k)}; \, \ell_k,h_k\right), \qquad i=1,\ldots,90. \tag{S1.3}\label{eq:supp_regional_draw}
+\end{align}
+
+
+Here $\mathcal{TN}(m,\sigma;\ell,h)$ denotes a normal distribution with parent-Gaussian location $m$ and standard deviation $\sigma$, truncated to $[\ell,h]$. The mean and variance after truncation depend on all four arguments. The hyperparameters are $\sigma_{\mathrm{subj}}^{(k)}=\alpha^{\mathrm{subj}}\Delta_k$ and $\sigma_{\mathrm{node}}^{(k)}=\alpha^{\mathrm{node}}\Delta_k$, with values in Supplementary Table~\ref{tab:supp_sampler_hp}. The label ``subj'' denotes the sample-level component of the synthetic hierarchy.
+
+For $\vartheta=\vartheta_{s,i}^{(k)}$ and $m=m_s^{(k)}$, the law of total variance gives
+\begin{equation}
+\operatorname{Var}(\vartheta)=
+\underbrace{\operatorname{Var}\!\left(\operatorname{E}[\vartheta\mid m]\right)}_{\text{Between-sample component}}
++\underbrace{\operatorname{E}\!\left[\operatorname{Var}(\vartheta\mid m)\right]}_{\text{Within-sample component}}.
+\tag{S1.4}\label{eq:supp_total_variance}
+\end{equation}
+All directly sampled regional families use $\alpha^{\mathrm{subj}}=1/4$. The conditional scale $\alpha^{\mathrm{node}}$ is $1/12$ for excitatory time constants, $1/8$ for sigmoid parameters, and $1/6$ for local connectivity factors. The shared latent location produces exchangeable interregional dependence within each family; anatomical distance is absent from this sampling rule. The global delay is sampled separately according to Equation~\eqref{eq:supp_delay}.).
+
+\paragraph{Coupling Constraints for Inhibitory Time Constants}
+For branch $a\in\{1,2\}$, the inhibitory time constant is sampled conditionally on the matching excitatory time constant:
+\begin{equation}
+\begin{aligned}
+\tau_{ia}^{s,i}&=\rho_a^{s,i}\tau_{ea}^{s,i},\\
+\rho_a^{s,i}\mid\tau_{ea}^{s,i}
+&\sim\mathrm{Uniform}\!\left(
+\max\!\left[1,\frac{\ell_{ia}}{\tau_{ea}^{s,i}}\right],\,
+\min\!\left[\kappa,\frac{h_{ia}}{\tau_{ea}^{s,i}}\right]\right),
+\qquad\kappa=\frac{12}{5}.
+\end{aligned}
+\tag{S1.5}\label{eq:supp_conditional_tau}
+\end{equation}
+Here $\ell_{ia}$ and $h_{ia}$ are the branch-specific inhibitory bounds in Supplementary Table~\ref{tab:supp_sampling}. This construction gives the conditional support
+\[
+\max(\tau_{ea}^{s,i},\ell_{ia})
+\leq\tau_{ia}^{s,i}
+\leq\min(\kappa\tau_{ea}^{s,i},h_{ia}).
+\]
+The interval is feasible for the tabulated excitatory bounds. The ordering $\tau_{ia}\geq\tau_{ea}$ and ratio ceiling $\kappa=12/5$ are modeling constraints selected for this study. Under the reported bounds, the maximal achievable ratios $h_{ia} / \ell_{ea}$ (or $h_{ia} / h_{ea}$) confirm that the ratio ceiling $\kappa = 12/5 = 2.4$ exceeds $16.8 / 8.4 = 2.0$ for the fast branch and $35 / 10 = 3.5$ (with $35 / 35 = 1.0$ at the upper bound) for the slow branch, ensuring that the tabulated upper limits remain the active upper restrictions. The inverse-network mapping in Section~S2 uses the same ratio ceiling together with a broader output domain. Following the sampling protocol, we synthesized $S=10^6$ paired parameter--scalp EEG samples for inverse-network training and validation.
+
+
+
+\suppsubsection{Training Implementation Details}
+\label{sec:supp_training}
+Each input sample is a 5~s 19-channel scalp EEG segment sampled at 256~Hz; thus, the network input is represented as
+\begin{equation}
+    \mathbf{X}\in\mathbb{R}^{B\times C\times T},\qquad C=19,\quad T=5\times256=1280,
+    \tag{S2.1}
+\end{equation}
+where $B$ denotes the mini-batch size. Each EEG segment undergoes a two-step demeaning procedure: first subtracting the temporal mean per channel, and then subtracting the cross-channel spatial mean at each time point, enforcing an approximate zero mean along both axes. For numerical stability, segments are screened by peak-to-peak amplitude within the analysis window, retaining only traces within $[3,\,100]~\mu$V.
+
+The inverse mapper of NeuroDyn-EEG employs a multi-branch spatial--spectral inversion (MB-SSI) architecture. This architecture preserves three complementary streams of feature information in parallel: the scalp temporal branch captures multi-scale waveforms and long-range temporal contexts; the source-space branch constructs localized representations indexed by AAL nodes via the leadfield pseudoinverse; and the spectral branch explicitly encodes low-frequency oscillatory profiles. Subsequently, taking source node tokens as queries and scalp temporal tokens as keys and values, the model integrates inter-nodal and cross-domain information through node self-attention and cross-attention. Attention weights are not interpreted as anatomical connectivity, effective connectivity, or physical electrode sensitivities. The 12-target configuration used in the current study contains approximately $2.43\times10^6$ trainable parameters. Layer-by-layer specifications and tensor dimensions are detailed in Supplementary Table~\ref{tab:supp_neurodyn_architecture}.
+
+{\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{longtable}{p{0.16\textwidth}p{0.30\textwidth}p{0.25\textwidth}p{0.16\textwidth}}
+\caption{Layer-wise specification of the NeuroDyn-EEG multi-branch spatial--spectral inversion network. $B$ denotes the batch size. Tensor dimensions follow the channel-first convention.}
+\label{tab:supp_neurodyn_architecture}\\
+\toprule
+\textbf{Module} & \textbf{Layer / operation} & \textbf{Parameters} & \textbf{Output size} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small Table~\ref{tab:supp_neurodyn_architecture} continued from the previous page.}\\
+\toprule
+\textbf{Module} & \textbf{Layer / operation} & \textbf{Parameters} & \textbf{Output size} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+\multirow{3}{0.16\textwidth}{\textbf{Input and preprocessing}}
+& Scalp EEG segment & $C=19$, $f_s=256$~Hz, $T=1280$ (5~s) & $B\times19\times1280$ \\
+\cmidrule(l){2-4}
+& Temporal and spatial demeaning & Channel-wise temporal mean removal; sample-wise cross-channel mean removal & $B\times19\times1280$ \\
+\cmidrule(l){2-4}
+& Peak-to-peak amplitude screening & Retained range: $[3,100]~\mu$V & $B\times19\times1280$ \\
+\midrule
+
+\multirow{7}{0.16\textwidth}{\textbf{Scalp temporal branch}}
+& Four parallel Conv1D paths & $C_{\mathrm{in}}=19$, $C_{\mathrm{out}}=32$ per path; $k\in\{3,5,7,9\}$; $s=2$; same padding; no bias & $4\times(B\times32\times640)$ \\
+\cmidrule(l){2-4}
+& Channel concatenation & $4\times32=128$ channels & $B\times128\times640$ \\
+\cmidrule(l){2-4}
+& Dilated residual block 1 & Two Conv1D layers; $C=128$, $k=5$, $d=2$; pre-BN; LeakyReLU$(0.2)$; dropout $=0.1$ & $B\times128\times640$ \\
+\cmidrule(l){2-4}
+& Dilated residual block 2 & Two Conv1D layers; $C=128$, $k=5$, $d=4$; pre-BN; LeakyReLU$(0.2)$; dropout $=0.1$ & $B\times128\times640$ \\
+\cmidrule(l){2-4}
+& Adaptive average pooling & $640\rightarrow8$ temporal bins & $B\times128\times8$ \\
+\cmidrule(l){2-4}
+& Pointwise projection & Conv1D, $k=1$, $128\rightarrow192$ & $B\times192\times8$ \\
+\cmidrule(l){2-4}
+& Transposition and sinusoidal positional encoding & $d_{\mathrm{model}}=192$, sequence length $=8$ & $B\times8\times192$ \\
+\midrule
+
+\multirow{6}{0.16\textwidth}{\textbf{Source pseudo-inverse branch}}
+& Tikhonov-regularized inverse projection & $\mathbf{L}^{+}\in\mathbb{R}^{90\times19}$; ridge $\lambda=10^{-3}$ & $B\times90\times1280$ \\
+\cmidrule(l){2-4}
+& Grouped Conv1D + BN + LeakyReLU & $90\rightarrow1080$; $k=7$, $s=4$, $p=3$, groups $=90$ & $B\times1080\times320$ \\
+\cmidrule(l){2-4}
+& Grouped Conv1D + BN + LeakyReLU & $1080\rightarrow1080$; $k=5$, $s=4$, $p=2$, groups $=90$ & $B\times1080\times80$ \\
+\cmidrule(l){2-4}
+& Grouped Conv1D + BN + LeakyReLU & $1080\rightarrow2160$; $k=3$, $s=2$, $p=1$, groups $=90$ & $B\times2160\times40$ \\
+\cmidrule(l){2-4}
+& Adaptive average pooling & $40\rightarrow1$ temporal bin & $B\times2160\times1$ \\
+\cmidrule(l){2-4}
+& Reshape to node-wise features & 24 features per AAL node & $B\times90\times24$ \\
+\midrule
+
+\multirow{7}{0.16\textwidth}{\textbf{Spectral branch}}
+& Real-valued FFT & 1280 time samples; 641 non-negative-frequency bins & $B\times19\times641$ \\
+\cmidrule(l){2-4}
+& Log-magnitude transform and frequency truncation & $\log(1+|\operatorname{rFFT}(\mathbf{X})|)$; first 201 bins ($0$--$40$~Hz) & $B\times19\times201$ \\
+\cmidrule(l){2-4}
+& Conv1D + BN + LeakyReLU & $19\rightarrow32$; $k=5$, $s=1$, $p=2$ & $B\times32\times201$ \\
+\cmidrule(l){2-4}
+& Conv1D + BN + LeakyReLU & $32\rightarrow32$; $k=5$, $s=2$, $p=2$ & $B\times32\times101$ \\
+\cmidrule(l){2-4}
+& Conv1D + BN + LeakyReLU & $32\rightarrow64$; $k=3$, $s=2$, $p=1$ & $B\times64\times51$ \\
+\cmidrule(l){2-4}
+& Adaptive average pooling and flattening & $51\rightarrow1$ frequency bin & $B\times64$ \\
+\cmidrule(l){2-4}
+& Spectral projection & Linear, $64\rightarrow64$ & $B\times64$ \\
+\midrule
+
+\multirow{5}{0.16\textwidth}{\textbf{Node-token construction}}
+& Learnable node embedding & 90 embeddings, $d_{\mathrm{node}}=32$ & $B\times90\times32$ \\
+\cmidrule(l){2-4}
+& Feature concatenation & $24+32=56$ features per node & $B\times90\times56$ \\
+\cmidrule(l){2-4}
+& Node projection & Linear, $56\rightarrow192$ & $B\times90\times192$ \\
+\cmidrule(l){2-4}
+& Learnable global query expansion & One query, $d_{\mathrm{model}}=192$ & $B\times1\times192$ \\
+\cmidrule(l){2-4}
+& Token concatenation & 90 node tokens + 1 global token & $B\times91\times192$ \\
+\midrule
+
+\multirow{2}{0.16\textwidth}{\textbf{Dense node-token self-attention} $\boldsymbol{\times2}$}
+& Pre-LN multi-head self-attention + residual & 6 heads; head dimension $=32$; dropout $=0.1$ & $B\times91\times192$ \\
+\cmidrule(l){2-4}
+& Pre-LN feed-forward network + residual & $192\rightarrow384\rightarrow192$; GELU; dropout $=0.1$ & $B\times91\times192$ \\
+\midrule
+
+\multirow{2}{0.16\textwidth}{\textbf{Scalp-to-source cross-attention} $\boldsymbol{\times2}$}
+& Pre-LN multi-head cross-attention + residual & $Q:91$ source/global tokens; $K,V:8$ scalp-time tokens; 6 heads; head dimension $=32$ & $B\times91\times192$ \\
+\cmidrule(l){2-4}
+& Pre-LN feed-forward network + residual & $192\rightarrow384\rightarrow192$; GELU; dropout $=0.1$ & $B\times91\times192$ \\
+\midrule
+
+\multirow{10}{0.16\textwidth}{\textbf{Parameter-specific prediction heads}}
+& Broadcast spectral feature over nodes & 64 spectral features per node & $B\times90\times64$ \\
+\cmidrule(l){2-4}
+& Node--spectral feature concatenation & $192+64=256$ features per node & $B\times90\times256$ \\
+\cmidrule(l){2-4}
+& Node-head hidden layer 1 & Independent per parameter; Linear $256\rightarrow128$; LeakyReLU$(0.2)$; dropout $=0.1$ & $B\times90\times128$ \\
+\cmidrule(l){2-4}
+& Node-head hidden layer 2 & Linear $128\rightarrow128$; LeakyReLU$(0.2)$ & $B\times90\times128$ \\
+\cmidrule(l){2-4}
+& Node-head output layer & Linear $128\rightarrow1$; squeeze last dimension & $B\times90$ per target \\
+\cmidrule(l){2-4}
+& Global--spectral feature concatenation & $192+64=256$ features & $B\times256$ \\
+\cmidrule(l){2-4}
+& Global-head hidden layer & Linear $256\rightarrow128$; LeakyReLU$(0.2)$; dropout $=0.1$ & $B\times128$ \\
+\cmidrule(l){2-4}
+& Global-head output layer & Linear $128\rightarrow1$ & $B\times1$ \\
+\cmidrule(l){2-4}
+& Physiological output constraints & Soft-bounded sigmoid or $\tau_i$--$\tau_e$ coupled mapping; $\kappa=12/5$ & $B\times90$ or $B\times1$ \\
+\cmidrule(l){2-4}
+& Output dictionary & 11 node-wise targets + 1 sample-wise target & $11\times(B\times90)$ and $B\times1$ \\
+\end{longtable}
+}
+
+In the source-space branch, the regularized pseudoinverse of the leadfield matrix $\mathbf{L}\in\mathbb{R}^{19\times90}$ is fixed and is not trainable, but is registered as a fixed buffer saved with the model:
+\begin{equation}
+    \mathbf{L}^{+}=\left(\mathbf{L}^{\mathsf T}\mathbf{L}+\lambda\mathbf{I}\right)^{-1}\mathbf{L}^{\mathsf T},
+    \qquad \lambda=10^{-3}.
+    \tag{S2.2}
+\end{equation}
+The resulting 90 source signals are individually processed by grouped 1D convolutions with the number of groups strictly set to 90, ensuring that no convolutional kernel mixes information across distinct brain regions at this stage. Three convolutional layers sequentially compress the temporal length from $1280$ to $320$, $80$, and $40$, followed by temporal average pooling to yield a 24-dimensional feature vector per node. After concatenation with a 32-dimensional learnable positional embedding per node, a linear layer projects the 56-dimensional input to $d_{\mathrm{model}}=192$. This design concurrently incorporates physical localization dictated by the leadfield and data-driven node identity encoding.
+
+The scalp temporal branch jointly encodes the 19 channels into 128 feature channels. Four parallel convolutions with kernel sizes of 3, 5, 7, and 9 initially halve the temporal length; subsequently, two residual blocks with dilation rates of 2 and 4 refine the representations. Adaptive average pooling compresses the full 5~s window into eight ordered temporal slots, which, after $1\times1$ convolutional projection and addition of fixed sinusoidal positional encodings, form the scalp temporal memory $\mathbf{K}=\mathbf{V}\in\mathbb{R}^{B\times8\times192}$.
+
+The spectral branch computes a real FFT along the temporal axis of the same input and applies a $\log(1+|\cdot|)$ compression to the magnitudes. The network retains the first 201 non-negative-frequency bins, including the DC component ($k=0,\ldots,200$). For 1280 samples acquired at 256~Hz, the frequency spacing is $\Delta f=256/1280=0.2$~Hz, and the retained bin centers span $0$--$40$~Hz. Three convolutional layers, global average pooling, and linear projection produce a 64-dimensional sample-level spectral vector. This vector is broadcast across all brain regions at the prediction stage and concatenated with each final node token, providing explicit low-frequency oscillatory conditioning for dynamical parameter inversion.
+
+The 90 source node tokens and one learnable global query token first pass through two self-attention layers. Each layer employs pre-layer normalization, 6-head attention, residual connections, and a feed-forward network with an intermediate dimension of 384; per-head dimension is $192/6=32$. Because no fixed adjacency mask is enforced, the 90 nodes constitute a fully connected graph, where the attention matrix functions as a sample-adaptive dense relational operator. Subsequently, two cross-attention layers of identical architecture take these 91 tokens as queries and the eight scalp temporal tokens as keys and values:
+\begin{gather}
+    \mathbf{A} = \operatorname{softmax}\!\left(\frac{(\mathbf{Q}\mathbf{W}_{Q})(\mathbf{K}\mathbf{W}_{K})^{\mathsf T}}{\sqrt{32}}\right), \notag\\
+    \operatorname{CrossAttn}(\mathbf{Q},\mathbf{K},\mathbf{V}) = \mathbf{A}(\mathbf{V}\mathbf{W}_{V}),
+    \tag{S2.3}
+\end{gather}
+with residual connections applied after each attention and feed-forward sublayer. This asymmetric fusion enables source nodes to actively select the most relevant scalp temporal evidence for their parameter estimation, while the global token aggregates sample-level information for predicting $\mathrm{delay\_scale}$.
+
+The fused node tokens are concatenated with the broadcast spectral vector to form 256-dimensional features. The 11 region-wise parameter families each utilize an independent 3-layer MLP to generate $B\times90$ raw outputs; the global delay scaling factor $\mathrm{delay\_scale}$ utilizes a shallower 2-layer MLP to generate a $B\times1$ output from the global token. The model does not share final parameter heads, allowing distinct physical quantities to learn tailored inverse mappings. For all parameters other than the inhibitory time constants, the raw output $a_k$ is mapped via a soft-bounded Sigmoid:
+\begin{equation}
+    \widehat{\theta}_k=\ell_k+(h_k-\ell_k)
+    \left[(1+2\alpha_k)\sigma(a_k)-\alpha_k\right],
+    \tag{S2.4}
+\end{equation}
+where $[\ell_k,h_k]$ is the physiological prior interval, and $\alpha_k\geq0$ controls the allowable extension relative to the interval width; $\alpha_k=0$ recovers the strictly bounded Sigmoid. For the two sets of inhibitory time constants, the network employs a dedicated output layer coupled with the matching excitatory time constant:
+\begin{equation}
+    \widehat{\tau}_{i\bullet}=\ell_{i\bullet}+
+    \left(\frac{12}{5}\widehat{\tau}_{e\bullet}-\ell_{i\bullet}\right)
+    \sigma(a_{i\bullet}),\qquad \bullet\in\{1,2\},
+    \tag{S2.5}
+\end{equation}
+This mapping incorporates the study-specific ratio ceiling $\kappa=12/5$ into the output parameterization. As specified in Section~S1, this ratio ceiling is a modeling choice; the conditional training prior additionally enforces absolute time-constant bounds and the ordering $\tau_i\geq\tau_e$. Target bounds and multi-task loss weights are provided in Supplementary Table~\ref{tab:supp_sampling} and Supplementary Table~\ref{tab:supp_weights}, respectively.
+
+The model is trained using the Adam optimizer with an initial learning rate of $1 \times 10^{-3}$, a weight decay of $1 \times 10^{-5}$, a batch size of 256, and a maximum of 150 training epochs. The generated corpus is split $5{:}1$ into training and validation sets. To prevent overfitting, an early stopping mechanism terminates training if the validation loss does not improve for 20 consecutive epochs, and the checkpoint with the lowest validation loss is selected. The model is implemented in Python 3.7.12 using PyTorch 1.7.1, with all experiments conducted on a server equipped with 4 NVIDIA T4 GPUs (16 GB VRAM each) accelerated by CUDA 11.0. The complete training and validation pipeline is summarized in Supplementary Algorithm~\ref{alg:supp_train}.
+
+\begin{algorithm}[H]
+\caption{Training and Validation Procedure for EEG-to-Parameter Inversion}
+\label{alg:supp_train}
+\begin{algorithmic}[1]
+\Require Paired training data $\mathcal{D}_{\mathrm{train}}$ and validation data $\mathcal{D}_{\mathrm{val}}$; parameter set $\mathcal{P}$; loss weights $\{w_k\}_{k\in\mathcal{P}}$
+\Require Batch size $B=256$; maximum epochs $E=150$; learning rate $\eta=10^{-3}$; weight decay $\lambda_{\mathrm{wd}}=10^{-5}$; early stopping patience $P=20$
+\State Initialize model $f_\psi$; initialize Adam optimizer with learning rate $\eta$ and weight decay $\lambda_{\mathrm{wd}}$
+\State $\mathcal{L}_{\mathrm{best}} \leftarrow +\infty$; $c_{\mathrm{noimp}} \leftarrow 0$
+\For{$\mathit{epoch} \leftarrow 1$ \textbf{to} $E$}
+    \For{each mini-batch $(x, \theta)$ of size $B$ sampled from $\mathcal{D}_{\mathrm{train}}$}
+        \State Demean $x$ along both temporal and spatial axes
+        \State Select valid index set $I = \{i \mid 3 \leq \mathrm{amp}(x_i) \leq 100\}$
+        \If{$|I| = 0$} \State \textbf{continue to next mini-batch} \EndIf
+        \State $x \leftarrow x[I]$, $\theta \leftarrow \theta[I]$
+        \State $\mathcal{L} \leftarrow \displaystyle\sum_{k\in\mathcal{P}} w_k \cdot \mathrm{MAE}(f_\psi(x)_k,\,\theta_k)$
+        \State Update $\psi$ via Adam according to $\nabla_\psi \mathcal{L}$
+    \EndFor
+    \State Compute weighted validation loss $\mathcal{L}_{\mathrm{val}}$ on $\mathcal{D}_{\mathrm{val}}$
+    \If{$\mathcal{L}_{\mathrm{val}} < \mathcal{L}_{\mathrm{best}}$}
+        \State Save checkpoint $f_\psi$; $\mathcal{L}_{\mathrm{best}} \leftarrow \mathcal{L}_{\mathrm{val}}$; $c_{\mathrm{noimp}} \leftarrow 0$
+    \Else
+        \State $c_{\mathrm{noimp}} \leftarrow c_{\mathrm{noimp}} + 1$
+        \If{$c_{\mathrm{noimp}} \geq P$}
+            \State \textbf{Terminate training early}
+            \State \textbf{break}
+        \EndIf
+    \EndIf
+\EndFor
+\State \Return Checkpoint $f_\psi$ with lowest validation loss
+\end{algorithmic}
+\end{algorithm}
+
+\suppsubsection{Downstream Preprocessing: Baseline and NeuroDyn-EEG Cohort Rules}
+\label{sec:supp_preprocess}
+\paragraph{Baselines}
+Downstream evaluations strictly adhere to each baseline model's officially published preprocessing pipeline, ensuring that performance variations are attributable to architecture rather than customized uniform filtering:
+
+\begin{description}
+    \item[\textbf{CBraMod}:] 19 standard 10--20 channels; 0.3--75 Hz bandpass and 60 Hz notch filters; resampled to 200 Hz; 30-second non-overlapping segments; segments with amplitude $>$ $\pm100~\mu$V discarded; amplitudes scaled to $[-1,1]$ by a factor of 100.
+    \item[\textbf{LaBraM}:] 0.1--75 Hz bandpass, 50 Hz notch; resampled to 200 Hz; inputs scaled to $[-1,1]$ in units of 0.1 mV.
+    \item[\textbf{BrainOmni}:] 0.1--96 Hz bandpass, 50/60 Hz notch; resampled to 256 Hz; bad channels detected via PSD and interpolated; common average reference (CAR); channel-wise z-scoring.
+    \item[\textbf{VAEEG}:] Resampled to 256 Hz; segments $>400~\mu$V rejected; CAR; FFT band power across five frequency bands (Delta to High Beta); 1-second segments fed into the frequency-band autoencoder.
+\end{description}
+
+\paragraph{NeuroDyn-EEG (Clinical Harmonization)}
+The inverse network expects 19 standard 10--20 electrode channels and a sampling grid consistent with the forward model and synthetic pre-training corpus in the main text. For each public cohort, we perform the following steps: (i)~select the standard sensor layout; (ii)~apply band-limiting and resampling according to acquisition constraints; (iii)~apply channel-wise temporal mean removal, sample-wise cross-channel spatial mean removal, and peak-to-peak amplitude screening within the analysis window (matching the quality control categories in Section~S2); (iv)~register retained segments per subject, ensuring that classification evaluation and JR parameter group comparisons are always conducted on identical screened data and clinical labels.
+
+\suppsubsection{Downstream Evaluation Setup}
+\label{sec:supp_eval}
+We employ subject-stratified 5-fold cross-validation: Within each fold, the training, validation, and test subject sets are mutually exclusive..
+\begin{itemize}
+    \item \textbf{Custom Splits (AD65, PD31, MDD):} Subjects are partitioned into five disjoint subsets; each fold uses three subsets for training, one for validation, and one for testing.
+    \item \textbf{TUAB (Official Split):} The official training/evaluation split is preserved; the official training set is further divided into 5 folds (4 training / 1 validation per fold); the official evaluation set serves as the final test set.
+\end{itemize}
+To account for class imbalance, we evaluate models using Balanced Accuracy (BACC), the Area Under the Receiver Operating Characteristic Curve (AUCROC), and the Area Under the Precision-Recall Curve (AUCPR). Notably, BACC is computed as macro-averaged recall, while AUCPR places greater emphasis on performance for the minority positive class. Two independent random seeds $\times$ 5 folds generate 10 runs per task; checkpoints are selected based on peak validation BACC; test metrics are reported as mean $\pm$ standard deviation across runs.
+
+\suppsubsection{Simulation Experiment Metrics}
+\label{sec:supp_simmetrics}
+
+\textbf{Parameter Recovery (Experiment~1)} utilizes the \textbf{Pearson correlation coefficient} computed on pooled predicted vs.\ true values for each model output target, as well as the \textbf{Pearson correlation coefficient} across each cortical region for spatially varying quantities shown in the main text heatmap subplots. The 11 JR parameter families are defined across AAL-90 brain regions; $\mathrm{delay\_scale}$ is a sample-level scalar.
+
+\noindent\textbf{Surrogate Noise Sensitivity (Experiment~2)} For each target parameter $p$, surrogate noise family $k$, and SNR level $s$, Pearson $r$, coefficient of determination $R^2$, and mean absolute error (MAE) are computed across $N$ evaluation samples. All three metrics are calculated independently at the parameter level without pooling the 12 targets prior to evaluation. Pearson $r$ evaluates the linear consistency between predictions and ground truths; $R^2$ and MAE are defined as
+\begin{equation*}
+\begin{aligned}
+\mathrm{SSE}_{p,k,s}
+&= \sum_{i=1}^{N}\left(\theta_{i,p}-\hat{\theta}_{i,p}^{(k,s)}\right)^2, \\
+\mathrm{SST}_{p}
+&= \sum_{i=1}^{N}\left(\theta_{i,p}-\bar{\theta}_{p}\right)^2, \\
+R^2_{p,k,s}
+&= 1-\frac{\mathrm{SSE}_{p,k,s}}{\mathrm{SST}_{p}}, \\
+\mathrm{MAE}_{p,k,s}
+&= \frac{1}{N}\sum_{i=1}^{N}\left|\theta_{i,p}-\hat{\theta}_{i,p}^{(k,s)}\right|,
+\end{aligned}
+\end{equation*}
+where $\bar{\theta}_{p}$ denotes the mean ground-truth value of parameter $p$ across evaluation samples. $R^2=1$ indicates perfect prediction; $R^2=0$ indicates that the squared prediction error equals the baseline error of predicting the ground-truth mean; when $\mathrm{SSE}>\mathrm{SST}$, $R^2<0$. A lower MAE indicates smaller absolute prediction error. Because distinct parameters possess different physical dimensions and numerical scales, raw MAE is solely used within the same parameter to compare noise types, SNR levels, and clean baselines, rather than for comparing recovery difficulty across different parameters. Parameter-wise $R^2$ and MAE results are presented in Supplementary Figure~\ref{fig:supp_noise_r2} and Supplementary Figure~\ref{fig:supp_noise_mae}, respectively; lower SNR corresponds to stronger contamination. These phenomenological surrogate noise models are designed for stress-testing and do not encompass the full complexity of real-world artifacts.
+
+\begin{figure}[p]
+    \centering
+    \includegraphics[width=\textwidth]{figures/exp3_per_param_r2_vs_snr.png}
+    \caption{\textbf{Parameter-wise $R^2$ robustness results under four surrogate noise types.}
+    The 12 subpanels correspond to the 12 model output targets; each subpanel presents $R^2$ values for white noise, pink noise, EMG-like noise, and EOG-like noise across SNR 30 to $-5$\,dB, referencing the clean baseline result for that parameter. $R^2=1$ indicates perfect agreement; $R^2=0$ indicates that prediction mean squared error equals the ground-truth mean baseline error; $R^2<0$ indicates residual sum of squares exceeds that baseline error. All curves are computed independently per parameter.}
+    \label{fig:supp_noise_r2}
+\end{figure}
+
+\begin{figure}[p]
+    \centering
+    \includegraphics[width=\textwidth]{figures/exp3_per_param_mae_vs_snr.png}
+    \caption{\textbf{Parameter-wise MAE robustness results under four surrogate noise types.}
+    Subpanels, noise types, SNR levels, and clean baseline references are identical to Supplementary Figure~\ref{fig:supp_noise_r2}. Lower MAE indicates smaller absolute prediction error; the vertical axis preserves the original physical scale of each parameter. Therefore, curves should be used to compare different noise types and SNR conditions within each parameter panel, rather than comparing recovery difficulty across distinct parameters based on absolute MAE magnitude.}
+    \label{fig:supp_noise_mae}
+\end{figure}
+
+\noindent\textbf{Closed-Loop Evaluation (Experiment~3)} evaluates inverse--forward closed-loop reconstruction on real resting-state EEG: observed waveforms are inverted and injected back into the forward JR simulator to yield reconstructed waveforms, followed by consistency evaluation. Temporal consistency is assessed via Phase-Locking Value (PLV) across $\delta$ (1--4\,Hz), $\theta$ (4--8\,Hz), and $\alpha$ (8--13\,Hz) bands; the $\beta$ band is excluded from PLV analysis due to susceptibility to aperiodic $1/f$ backgrounds and scalp EMG, though its power profile remains covered by spectral metrics. Spectral consistency within 1--40\,Hz is quantified via three metrics: Pearson correlation of log Welch power spectra ($r_{\log}$), absolute $\alpha$-peak frequency error within 7--13\,Hz, and absolute error in aperiodic $1/f$ spectral slope in log-log space; channel-wise metrics are averaged across subjects.
+
+\suppsubsection{Noise Synthesis and SNR Calibration}
+\label{sec:supp_noise}
+
+\paragraph{Phenomenological Noise Modeling and Robustness Benchmarking}
+Real scalp EEG is subject to diverse physiological and non-physiological interferences, contributing to distribution shifts between empirical recordings and clean simulations. To quantify the model's sensitivity to canonical out-of-distribution perturbations, we construct an SNR-calibrated semi-synthetic noise injection framework. This framework selects four phenomenological proxies: (i) Gaussian white noise approximating sensor and amplifier thermal noise floors; (ii) aperiodic, scale-free ``$1/f$'' components \citep{donoghue2020parameterizing}; (iii) electromyographic (EMG)-like artifacts with energy concentrated in higher frequency bands \citep{goncharova2003spectral,muthukumaraswamy2013high}; and (iv) electrooculographic (EOG)-like artifacts featuring low-frequency baseline drifts and high-amplitude transients \citep{croft2000eog}. These proxies do not span the entire spectrum of empirical artifacts.
+
+In the experimental protocol, additive noise is injected into clean forward-simulated signals $\mathbf{x} \in \mathbb{R}^{C \times T}$ ($C=19$ channels, sampling rate $f_s=256\,\mathrm{Hz}$) prior to parameter inversion. This study adopts \textbf{phenomenological modeling} to approximate canonical time-frequency characteristics directly in sensor space. The ocular component draws on the established biophysical characterization of the EOG \citep{elbert1985removal}. This additive noise protocol at specified SNR levels parallels stress-testing paradigms in EEG deep denoising benchmarks \citep{zhang2021eegdenoisenet}, offering transparent implementation and reproducibility while serving as a phenomenological proxy rather than a high-fidelity biophysical simulation.
+
+\paragraph{Signal-to-Noise Ratio Calibration (Per-Trial)}
+For each 5-second segment, \textbf{signal power} is defined as the mean squared amplitude across channels and time samples:
+\begin{equation}
+P_{\mathrm{sig}} = \frac{1}{CT} \sum_{c=1}^C \sum_{t=1}^T x_{c,t}^2. \tag{S6.1}\label{eq:supp_psig}
+\end{equation}
+Given a target \(\mathrm{SNR}_{\mathrm{dB}}\), the required \textbf{noise power} follows the standard power ratio:
+\begin{equation}
+P_{\mathrm{noise}} = \frac{P_{\mathrm{sig}}}{10^{\mathrm{SNR}_{\mathrm{dB}} / 10}}, \tag{S6.2}\label{eq:supp_pnoise}
+\end{equation}
+or equivalently \(\mathrm{SNR}_{\mathrm{dB}} = 10\log_{10}(P_{\mathrm{sig}}/P_{\mathrm{noise}})\). For each surrogate family, an unscaled template \(\tilde{\boldsymbol{\epsilon}}\) is generated, and its mean squared amplitude is computed:
+\begin{equation}
+P_{\mathrm{raw}} = \frac{1}{CT} \sum_{c,t} \tilde{\epsilon}_{c,t}^2. \tag{S6.3}\label{eq:supp_praw}
+\end{equation}
+The calibrated noise is then scaled as:
+\begin{equation}
+\boldsymbol{\epsilon} = \sqrt{\frac{P_{\mathrm{noise}}}{P_{\mathrm{raw}}}} \tilde{\boldsymbol{\epsilon}}. \tag{S6.4}\label{eq:supp_noise_scale}
+\end{equation}
+
+The contaminated segment is given by \(\mathbf{x}_{\mathrm{noisy}} = \mathbf{x} + \boldsymbol{\epsilon}\). Calibration is performed on a \textbf{per-trial} basis to ensure comparability across segments with heterogeneous RMS amplitudes at fixed \(\mathrm{SNR}_{\mathrm{dB}}\). Evaluated SNR levels are \(\mathrm{SNR}_{\mathrm{dB}}\in\{30,20,10,5,0,-5\}\), with lower \(\mathrm{SNR}_{\mathrm{dB}}\) corresponding to stronger contamination. For each noise type and \(\mathrm{SNR}_{\mathrm{dB}}\), \(\mathbf{x}_{\mathrm{noisy}}\) is processed by the inverse network, and \(\hat{\boldsymbol{\theta}}\) is evaluated against ground-truth parameters.
+
+\paragraph{Gaussian White Noise}
+Gaussian white noise models instrumental thermal noise and basic background noise floors at the electrode--scalp interface \citep{uriguen2015eeg}. Statistically, it is modeled as a discrete-time stochastic process whose samples at any time $t$ are independent and identically distributed according to $x_{\mathrm{white}}(t) \sim \mathcal{N}(0, \sigma_{\mathrm{white}}^2)$. Due to temporal memorylessness, white noise exhibits a uniform power spectral density across all frequencies. In algorithm simulations, modulating the variance $\sigma_{\mathrm{white}}^2$ provides precise control over the SNR level of background instrumentation noise, assessing parameter estimation stability under varying degrees of baseline interference.
+
+\paragraph{Pink ($1/f$-Type) Noise}
+This component approximates the aperiodic, scale-free background activity observed in empirical resting-state EEG \citep{he2014scale}. Unlike coherent neural oscillations with distinct peak frequencies, the power spectral density $S_{\mathrm{pink}}(f)$ of pink noise exhibits a power-law decay with frequency $f$ \citep{donoghue2020parameterizing}, i.e., $S_{\mathrm{pink}}(f) \propto 1/f^\alpha$ (set to $\alpha \approx 1$). Implementation-wise, we employ frequency-domain filtering: generating a standard Gaussian white noise sequence $x_{\mathrm{white}}(t)$, mapping it to the frequency domain via discrete Fourier transform ($\mathcal{F}$), applying an amplitude decay filter $f^{-1/2}$, and transforming back to the time domain via inverse Fourier transform ($\mathcal{F}^{-1}$):
+\begin{equation}
+x_{\mathrm{pink}}(t) = \mathcal{F}^{-1}\{\mathcal{F}\{x_{\mathrm{white}}(t)\} \cdot f^{-1/2}\}. \tag{S6.5}\label{eq:supp_pink}
+\end{equation}
+This component tests model sensitivity to low-frequency, high-energy background perturbations.
+
+\paragraph{EMG-Like Noise}
+Scalp electromyographic (EMG) activity arises from facial, cranial, and cervical muscle contractions, characterized by temporal burstiness and high-frequency spectral energy \citep{goncharova2003spectral}. To approximate these burst dynamics, we model EMG-like artifacts as envelope-modulated bandpass stochastic processes \citep{muthukumaraswamy2013high}:
+\begin{equation}
+x_{\mathrm{EMG}}(t) = A(t) \cdot [h_{\mathrm{bp}}(t) * w(t)], \tag{S6.6}\label{eq:supp_emg}
+\end{equation}
+where $w(t) \sim \mathcal{N}(0, 1)$ represents broadband Gaussian driving noise; $h_{\mathrm{bp}}(t)$ denotes the impulse response of a bandpass filter (passband 20--100\,Hz); and $*$ denotes convolution. The envelope $A(t)$ is a slowly varying non-negative modulation signal generated by low-pass smoothing a sparse Poisson-like random pulse train, capturing temporal stochasticity and burst energy dynamics associated with muscle activation.
+
+\paragraph{EOG-Like Noise}
+Guided by the characteristic features of ocular contamination described in the EEG artifact literature \citep{elbert1985removal,croft2000eog}, we formulate a simplified phenomenological model as a linear superposition of two ocular components:
+\begin{enumerate}
+    \item \textbf{Slow Drift}: Capturing high-amplitude, slow ocular movements volume-conducted to the scalp, obtained by applying a low-pass filter with an absolute cutoff of $4\,\mathrm{Hz}$ to standard Gaussian white noise \citep{croft2000eog}:
+    \begin{equation}
+    x_{\mathrm{drift}}(t) = \mathcal{F}^{-1}\{\mathcal{F}\{x_{\mathrm{white}}(t)\} \cdot H_{\mathrm{LP}\le 4\mathrm{Hz}}(f)\}. \tag{S6.7}\label{eq:supp_eog_drift}
+    \end{equation}
+    \item \textbf{Transient Bursts}: Modeling eyeblink artifacts. Random onset times $t_{0,i}$ are generated at an average rate of $\approx 0.2\,\mathrm{Hz}$ (approximately once every 5 seconds), modeled as Hann-window pulses with durations $T_i \in [0.1, 0.4]\,\mathrm{s}$:
+    \begin{equation}
+    x_{\mathrm{burst}}(t) = \sum_i A_i \cdot \frac{1}{2} \left[1 - \cos\left(\frac{2\pi(t - t_{0,i})}{T_i}\right)\right] \cdot \mathbb{I}_{[t_{0,i}, t_{0,i}+T_i]}(t), \tag{S6.8}\label{eq:supp_eog_burst}
+    \end{equation}
+    where $A_i$ is a random amplitude scaling factor and $\mathbb{I}$ is the indicator function. This formulation matches the characteristic morphology targeted by classical regression and template-matching blink removal algorithms \citep{croft2000eog,li2006blink}.
+\end{enumerate}
+Before global SNR scaling, the composite EOG template is formed as $x_{\mathrm{EOG}}(t) = x_{\mathrm{drift}}(t) + 0.5 \times x_{\mathrm{burst}}(t)$.
+
+\suppsubsection{Clinical Cohort JR Parameter Statistics and AAL Naming Mapping}
+\label{sec:supp_jr_stats}
+\paragraph{AD65}
+Under \(q_{\mathrm{BH}}<0.001\), the parameter family exhibiting the largest number of significant brain regions in AD65 is \texttt{$C_1$} (37/90 AAL regions), followed by \texttt{$\tau_{e2}$} (33), \texttt{$\theta$} (22), \texttt{$\tau_{e1}$} (15), and \texttt{$\beta$} (14). According to the AAL index mapping, the 37 significant regions for \texttt{$C_1$} are:
+R Precentral Gyrus, L Superior Frontal Gyrus, L Superior Orbital Gyrus, R Superior Orbital Gyrus, L Middle Orbital Gyrus, L IFG (p. Opercularis), R IFG (p. Opercularis), L IFG (p. Triangularis), L IFG (p. Orbitalis), L Posterior-Medial Frontal, L Olfactory cortex, R Olfactory cortex, L Insula Lobe, L Cingulum Ant, L Cingulum Mid, L Hippocampus, R Hippocampus, L ParaHippocampal Gyrus, L Cuneus, L Lingual Gyrus, L Superior Occipital Gyrus, R Superior Occipital Gyrus, R Middle Occipital Gyrus, R Inferior Occipital Gyrus, L Fusiform Gyrus, R Postcentral Gyrus, R Inferior Parietal Lobule, L Angular Gyrus, R Angular Gyrus, L Pallidum, R Pallidum, R Thalamus, R Heschl's Gyrus, L Superior Temporal Gyrus, R Temporal Pole, L Medial Temporal Pole, and R Medial Temporal Pole. These regions span prefrontal, cingulate, medial temporal, parietal/sensorimotor, thalamic/basal ganglia, and occipitotemporal visual systems; regional co-occurrence does not imply established inter-regional connectivity disruption.
+
+\paragraph{Figshare MDD}
+Under \(q_{\mathrm{BH}}<0.001\), the parameter family exhibiting the largest number of significant brain regions in Figshare MDD is \texttt{$\theta$} (23/90 AAL regions), followed by \texttt{$\tau_{i2}$} (18), \texttt{$C_4$} and \texttt{$r_{max}$} (13 each), and \texttt{$C_3$} and \texttt{$\beta$} (11 each). The 23 significant regions for \texttt{$\theta$} are:
+L Superior Frontal Gyrus, L Superior Orbital Gyrus, L IFG (p. Triangularis), L IFG (p. Orbitalis), L Posterior-Medial Frontal, L Superior Medial Gyrus, L Cingulum Mid, R Hippocampus, R ParaHippocampal Gyrus, R Amygdala, R Superior Occipital Gyrus, L Fusiform Gyrus, R Fusiform Gyrus, R Postcentral Gyrus, L Paracentral Lobule, L Putamen, R Putamen, R Thalamus, L Heschl's Gyrus, R Heschl's Gyrus, L Middle Temporal Gyrus, L Inferior Temporal Gyrus, and R Inferior Temporal Gyrus. These regions span prefrontal, cingulate, limbic, temporal, occipital visual, sensorimotor, striatal, and thalamic systems.
+
+\paragraph{Detailed Region-Wise Statistical Test Tables}
+Given the modest sample size of PD31 where no parameter family surpassed the $q_{\mathrm{BH}}<0.001$ threshold with a large number of regions, we report the region-wise Welch's $t$-test statistics for the top-ranked parameter families in AD65 (\texttt{$C_1$}) and Figshare MDD (\texttt{$\theta$}) across all significant regions ($q_{\mathrm{BH}}<0.001$). Regions are ordered by AAL index ascendingly; $t$ denotes the Welch statistic (positive values indicate case mean exceeds control mean), $\mathrm{dof}$ is the Welch--Satterthwaite degrees of freedom, $p$ is the uncorrected two-tailed $p$-value, $q_{\mathrm{BH}}$ is the Benjamini--Hochberg FDR-adjusted $p$-value, and $|d|$ is the absolute Cohen's effect size.
+
+\begin{longtable}{r p{0.36\textwidth} r r l l r}
+\caption{Region-wise Welch's $t$-tests for the \texttt{C1} parameter family in the AD65 cohort (significant regions with $q_{\mathrm{BH}}<0.001$; $n_{\mathrm{AD}}=36$, $n_{\mathrm{control}}=29$).}
+\label{tab:supp_ad65_c1_stats}\\
+\toprule
+ROI & AAL Brain Region & $t$ & dof & $p$ & $q_{\mathrm{BH}}$ & $|d|$ \\
+\midrule
+\endfirsthead
+\multicolumn{7}{l}{\small Table~\ref{tab:supp_ad65_c1_stats} continued from previous page.}\\
+\toprule
+ROI & AAL Brain Region & $t$ & dof & $p$ & $q_{\mathrm{BH}}$ & $|d|$ \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+2  & R Precentral Gyrus & 5.23 & 62.2 & $2.1\times10^{-6}$ & $4.3\times10^{-5}$ & 1.26 \\
+3  & L Superior Frontal Gyrus & 4.69 & 63.0 & $1.5\times10^{-5}$ & $1.7\times10^{-4}$ & 1.14 \\
+5  & L Superior Orbital Gyrus & 5.74 & 61.4 & $3.1\times10^{-7}$ & $1.2\times10^{-5}$ & 1.42 \\
+6  & R Superior Orbital Gyrus & 5.11 & 62.6 & $3.2\times10^{-6}$ & $5.3\times10^{-5}$ & 1.24 \\
+9  & L Middle Orbital Gyrus & 5.56 & 62.4 & $5.9\times10^{-7}$ & $2.0\times10^{-5}$ & 1.34 \\
+11 & L IFG (p. Opercularis) & 4.36 & 46.8 & $7.0\times10^{-5}$ & $5.1\times10^{-4}$ & 1.14 \\
+12 & R IFG (p. Opercularis) & 4.67 & 60.8 & $1.7\times10^{-5}$ & $1.9\times10^{-4}$ & 1.12 \\
+13 & L IFG (p. Triangularis) & 5.23 & 62.3 & $2.1\times10^{-6}$ & $4.3\times10^{-5}$ & 1.29 \\
+15 & L IFG (p. Orbitalis) & 5.88 & 62.9 & $1.7\times10^{-7}$ & $8.6\times10^{-6}$ & 1.43 \\
+19 & L Posterior-Medial Frontal & 4.55 & 61.8 & $2.5\times10^{-5}$ & $2.4\times10^{-4}$ & 1.09 \\
+21 & L Olfactory cortex & 5.33 & 62.8 & $1.4\times10^{-6}$ & $3.5\times10^{-5}$ & 1.29 \\
+22 & R Olfactory cortex & 4.10 & 62.3 & $1.2\times10^{-4}$ & $7.8\times10^{-4}$ & 0.99 \\
+29 & L Insula Lobe & 5.26 & 62.2 & $1.9\times10^{-6}$ & $4.1\times10^{-5}$ & 1.27 \\
+31 & L Cingulum Ant & 5.68 & 63.0 & $3.7\times10^{-7}$ & $1.4\times10^{-5}$ & 1.38 \\
+33 & L Cingulum Mid & 4.59 & 62.2 & $2.2\times10^{-5}$ & $2.2\times10^{-4}$ & 1.11 \\
+37 & L Hippocampus & 5.17 & 62.5 & $2.6\times10^{-6}$ & $4.8\times10^{-5}$ & 1.25 \\
+38 & R Hippocampus & 6.04 & 62.9 & $9.1\times10^{-8}$ & $6.4\times10^{-6}$ & 1.48 \\
+39 & L ParaHippocampal Gyrus & 4.93 & 62.6 & $6.3\times10^{-6}$ & $9.2\times10^{-5}$ & 1.19 \\
+45 & L Cuneus & 4.06 & 59.5 & $1.5\times10^{-4}$ & $9.0\times10^{-4}$ & 1.02 \\
+47 & L Lingual Gyrus & 4.39 & 57.6 & $4.9\times10^{-5}$ & $4.0\times10^{-4}$ & 1.11 \\
+49 & L Superior Occipital Gyrus & 4.02 & 62.9 & $1.6\times10^{-4}$ & $9.8\times10^{-4}$ & 0.98 \\
+50 & R Superior Occipital Gyrus & 5.50 & 62.0 & $7.7\times10^{-7}$ & $2.3\times10^{-5}$ & 1.32 \\
+52 & R Middle Occipital Gyrus & 5.02 & 62.0 & $4.7\times10^{-6}$ & $7.5\times10^{-5}$ & 1.21 \\
+54 & R Inferior Occipital Gyrus & 4.91 & 62.2 & $7.1\times10^{-6}$ & $9.7\times10^{-5}$ & 1.18 \\
+55 & L Fusiform Gyrus & 5.62 & 58.6 & $5.6\times10^{-7}$ & $1.9\times10^{-5}$ & 1.41 \\
+58 & R Postcentral Gyrus & 5.27 & 63.0 & $1.8\times10^{-6}$ & $4.1\times10^{-5}$ & 1.29 \\
+62 & R Inferior Parietal Lobule & 4.97 & 53.6 & $7.3\times10^{-6}$ & $9.9\times10^{-5}$ & 1.27 \\
+65 & L Angular Gyrus & 4.43 & 62.3 & $3.9\times10^{-5}$ & $3.4\times10^{-4}$ & 1.09 \\
+66 & R Angular Gyrus & 4.31 & 55.3 & $6.8\times10^{-5}$ & $5.0\times10^{-4}$ & 1.09 \\
+75 & L Pallidum & 5.36 & 62.3 & $1.3\times10^{-6}$ & $3.4\times10^{-5}$ & 1.29 \\
+76 & R Pallidum & 4.84 & 62.3 & $8.9\times10^{-6}$ & $1.2\times10^{-4}$ & 1.17 \\
+78 & R Thalamus & 6.32 & 61.5 & $3.3\times10^{-8}$ & $4.1\times10^{-6}$ & 1.57 \\
+80 & R Heschl's Gyrus & 4.38 & 63.0 & $4.7\times10^{-5}$ & $3.8\times10^{-4}$ & 1.06 \\
+81 & L Superior Temporal Gyrus & 5.64 & 62.2 & $4.4\times10^{-7}$ & $1.6\times10^{-5}$ & 1.39 \\
+84 & R Temporal Pole & 5.22 & 61.4 & $2.3\times10^{-6}$ & $4.3\times10^{-5}$ & 1.25 \\
+87 & L Medial Temporal Pole & 4.14 & 60.3 & $1.1\times10^{-4}$ & $7.1\times10^{-4}$ & 1.03 \\
+88 & R Medial Temporal Pole & 4.02 & 62.8 & $1.6\times10^{-4}$ & $9.8\times10^{-4}$ & 0.99 \\
+\end{longtable}
+
+\begin{longtable}{r p{0.36\textwidth} r r l l r}
+\caption{Region-wise Welch's $t$-tests for the \texttt{$\theta$} parameter family in the Figshare MDD cohort (significant regions with $q_{\mathrm{BH}}<0.001$; $n_{\mathrm{MDD}}=35$, $n_{\mathrm{control}}=30$).}
+\label{tab:supp_mdd_theta_stats}\\
+\toprule
+ROI & AAL Brain Region & $t$ & dof & $p$ & $q_{\mathrm{BH}}$ & $|d|$ \\
+\midrule
+\endfirsthead
+\multicolumn{7}{l}{\small Table~\ref{tab:supp_mdd_theta_stats} continued from previous page.}\\
+\toprule
+ROI & AAL Brain Region & $t$ & dof & $p$ & $q_{\mathrm{BH}}$ & $|d|$ \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+3  & L Superior Frontal Gyrus & -3.18 & 47.6 & $4.8\times10^{-6}$  & $1.0\times10^{-4}$ & 0.87 \\
+5  & L Superior Orbital Gyrus & -6.27 & 44.7 & $1.3\times10^{-7}$ & $5.2\times10^{-6}$ & 1.76 \\
+13 & L IFG (p. Triangularis) & -4.78 & 50.0 & $1.6\times10^{-5}$ & $2.6\times10^{-4}$ & 1.32 \\
+15 & L IFG (p. Orbitalis) & -5.90 & 50.0 & $3.1\times10^{-7}$ & $9.7\times10^{-6}$ & 1.63 \\
+19 & L Posterior-Medial Frontal & -5.96 & 45.6 & $3.4\times10^{-7}$ & $1.0\times10^{-5}$ & 1.67 \\
+23 & L Superior Medial Gyrus & -5.78 & 42.5 & $7.8\times10^{-7}$ & $2.1\times10^{-5}$ & 1.63 \\
+33 & L Cingulum Mid & -4.51 & 48.5 & $4.1\times10^{-5}$ & $4.8\times10^{-4}$ & 1.26 \\
+38 & R Hippocampus & -6.49 & 49.3 & $4.0\times10^{-8}$ & $2.3\times10^{-6}$ & 1.81 \\
+40 & R ParaHippocampal Gyrus & -4.41 & 49.4 & $5.5\times10^{-5}$ & $6.1\times10^{-4}$ & 1.22 \\
+42 & R Amygdala & -4.78 & 40.8 & $2.3\times10^{-5}$ & $3.5\times10^{-4}$ & 1.35 \\
+50 & R Superior Occipital Gyrus & -6.09 & 46.8 & $2.0\times10^{-7}$ & $6.8\times10^{-6}$ & 1.70 \\
+55 & L Fusiform Gyrus & -7.33 & 46.9 & $2.7\times10^{-9}$ & $2.6\times10^{-7}$ & 2.05 \\
+56 & R Fusiform Gyrus & -5.87 & 27.1 & $2.9\times10^{-6}$ & $7.1\times10^{-5}$ & 1.57 \\
+58 & R Postcentral Gyrus & -4.43 & 48.1 & $5.4\times10^{-5}$ & $6.1\times10^{-4}$ & 1.24 \\
+69 & L Paracentral Lobule & 4.99  & 41.1 & $1.1\times10^{-5}$ & $2.1\times10^{-4}$ & 1.41 \\
+73 & L Putamen & -4.60 & 44.9 & $3.4\times10^{-5}$ & $4.3\times10^{-4}$ & 1.29 \\
+74 & R Putamen & -5.17 & 40.5 & $6.6\times10^{-6}$ & $1.3\times10^{-4}$ & 1.46 \\
+78 & R Thalamus & -6.71 & 44.1 & $3.0\times10^{-8}$ & $1.8\times10^{-6}$ & 1.88 \\
+79 & L Heschl's Gyrus & -4.82 & 49.0 & $1.4\times10^{-5}$ & $2.3\times10^{-4}$ & 1.34 \\
+80 & R Heschl's Gyrus & -6.88 & 39.6 & $2.9\times10^{-8}$ & $1.8\times10^{-6}$ & 1.94 \\
+85 & L Middle Temporal Gyrus & -4.33 & 41.2 & $9.4\times10^{-5}$ & $8.7\times10^{-4}$ & 1.18 \\
+89 & L Inferior Temporal Gyrus & -5.19 & 42.3 & $5.7\times10^{-6}$ & $1.2\times10^{-4}$ & 1.46 \\
+90 & R Inferior Temporal Gyrus & 6.61  & 43.9 & $4.3\times10^{-8}$ & $2.4\times10^{-6}$ & 1.80 \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}

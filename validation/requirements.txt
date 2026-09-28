@@ -1,0 +1,9 @@
+numpy>=1.24
+scipy>=1.10
+torch>=2.0
+scikit-learn>=1.3
+mne>=1.5
+pandas>=2.0
+PyYAML>=6.0
+joblib>=1.3
+# Simulation additionally needs the project's eegaux dependency and head-model assets.
