@@ -1,0 +1,34 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Private model weights and local data
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+/TrainData/
+/validation_data/
+/RealData/
+/utils/
+
+# Generated training and validation outputs
+/TrainWorks/checkpoints/
+/TrainWorks/logs/
+/validation/cache/
+/validation/results/
+/validation/local_configs/
+/validation/config/closed_loop.json
+/validation/neurodyneeg-validation/figures/
+/dist/
+
+# Local credentials and editor settings
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
